@@ -92,6 +92,7 @@ def convert_range_image_to_point_cloud(frame, range_images, camera_projections, 
     points_NLZ = []
     points_intensity = []
     points_elongation = []
+    points_rowcol = []
     extrinsics = []
 
     frame_pose = tf.convert_to_tensor(np.reshape(np.array(frame.pose.transform), [4, 4]))
@@ -109,8 +110,8 @@ def convert_range_image_to_point_cloud(frame, range_images, camera_projections, 
         range_image_top_pose_tensor_translation)
 
     for c in calibrations:
-        points_single, cp_points_single, points_NLZ_single, points_intensity_single, points_elongation_single \
-            = [], [], [], [], []
+        points_single, cp_points_single, points_NLZ_single, points_intensity_single, points_elongation_single, points_rowcol_single \
+            = [], [], [], [], [], []
         for cur_ri_index in ri_index:
             range_image = range_images[c.name][cur_ri_index]
             if len(c.beam_inclinations) == 0:  # pylint: disable=g-explicit-length-test
@@ -135,6 +136,8 @@ def convert_range_image_to_point_cloud(frame, range_images, camera_projections, 
             range_image_NLZ = range_image_tensor[..., 3]
             range_image_intensity = range_image_tensor[..., 1]
             range_image_elongation = range_image_tensor[..., 2]
+            rows, cols = range_image_mask.shape
+            range_image_rowcol = tf.stack([*tf.meshgrid(tf.range(rows), tf.range(cols), indexing='ij')], axis=-1)
             range_image_cartesian = range_image_utils.extract_point_cloud_from_range_image(
                 tf.expand_dims(range_image_tensor[..., 0], axis=0),
                 tf.expand_dims(extrinsic, axis=0),
@@ -148,6 +151,7 @@ def convert_range_image_to_point_cloud(frame, range_images, camera_projections, 
             points_NLZ_tensor = tf.gather_nd(range_image_NLZ, tf.compat.v1.where(range_image_mask))
             points_intensity_tensor = tf.gather_nd(range_image_intensity, tf.compat.v1.where(range_image_mask))
             points_elongation_tensor = tf.gather_nd(range_image_elongation, tf.compat.v1.where(range_image_mask))
+            points_rowcol_tensor = tf.gather_nd(range_image_rowcol, tf.where(range_image_mask))
             cp = camera_projections[c.name][0]
             cp_tensor = tf.reshape(tf.convert_to_tensor(cp.data), cp.shape.dims)
             cp_points_tensor = tf.gather_nd(cp_tensor, tf.where(range_image_mask))
@@ -157,15 +161,17 @@ def convert_range_image_to_point_cloud(frame, range_images, camera_projections, 
             points_NLZ_single.append(points_NLZ_tensor.numpy())
             points_intensity_single.append(points_intensity_tensor.numpy())
             points_elongation_single.append(points_elongation_tensor.numpy())
+            points_rowcol_single.append(points_rowcol_tensor.numpy())
 
         points.append(np.concatenate(points_single, axis=0))
         cp_points.append(np.concatenate(cp_points_single, axis=0))
         points_NLZ.append(np.concatenate(points_NLZ_single, axis=0))
         points_intensity.append(np.concatenate(points_intensity_single, axis=0))
         points_elongation.append(np.concatenate(points_elongation_single, axis=0))
+        points_rowcol.append(np.concatenate(points_rowcol_single, axis=0))
         extrinsics.append(extrinsic)
 
-    return points, cp_points, points_NLZ, points_intensity, points_elongation, extrinsics
+    return points, cp_points, points_NLZ, points_intensity, points_elongation, points_rowcol, extrinsics
 
 
 def save_lidar_points(frame, cur_save_path, use_two_returns=True):
@@ -176,7 +182,7 @@ def save_lidar_points(frame, cur_save_path, use_two_returns=True):
         assert len(ret_outputs) == 3
         range_images, camera_projections, range_image_top_pose = ret_outputs
 
-    points, cp_points, points_in_NLZ_flag, points_intensity, points_elongation, extrinsics = convert_range_image_to_point_cloud(
+    points, cp_points, points_in_NLZ_flag, points_intensity, points_elongation, points_rowcol, extrinsics = convert_range_image_to_point_cloud(
         frame, range_images, camera_projections, range_image_top_pose, ri_index=(0, 1) if use_two_returns else (0,)
     )
 
@@ -185,11 +191,15 @@ def save_lidar_points(frame, cur_save_path, use_two_returns=True):
     points_in_NLZ_flag = np.concatenate(points_in_NLZ_flag, axis=0).reshape(-1, 1)
     points_intensity = np.concatenate(points_intensity, axis=0).reshape(-1, 1)
     points_elongation = np.concatenate(points_elongation, axis=0).reshape(-1, 1)
+    points_rowcol = np.concatenate(points_rowcol, axis=0).reshape(-1, 2)
 
     num_points_of_each_lidar = [point.shape[0] for point in points]
     save_points = np.concatenate([
         points_all, points_intensity, points_elongation, points_in_NLZ_flag
     ], axis=-1).astype(np.float32)
+
+    points_rowcol_encoded = common_utils.rowcol_encoder(points_rowcol)
+    save_points = np.concatenate([save_points, points_rowcol_encoded[..., None]], axis=-1)
 
     np.save(cur_save_path, save_points)
     # print('saving to ', cur_save_path)

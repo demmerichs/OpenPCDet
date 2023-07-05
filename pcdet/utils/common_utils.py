@@ -32,6 +32,24 @@ def drop_info_with_name(info, name):
     return ret_info
 
 
+def rowcol_encoder(data):
+    assert data.shape[-1] == 2, data.shape
+    assert np.issubdtype(data.dtype, np.integer), data.dtype
+    assert 0 <= data.min() <= data.max() < (1<<16)
+    data = data.astype(np.int32, copy=False)
+    intencoded = (data[..., 0] << 16) | data[..., 1]
+    assert intencoded.dtype == np.int32
+    return intencoded.view(np.float32)
+
+
+def rowcol_decoder(data):
+    assert data.dtype == np.float32, data.dtype
+    intencoded = data.view(np.int32)
+    row = intencoded >> 16
+    col = intencoded & ( (1<<16) - 1 )
+    return np.stack([row, col], axis=-1)
+
+
 def apply_data_transform(data_dict, transforms):
     assert set(transforms.keys()).issubset({'point', 'box'})
     data_keys = {
