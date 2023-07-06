@@ -195,9 +195,11 @@ class WaymoDataset(DatasetTemplate):
 
     def get_lidar(self, sequence_name, sample_idx, load_origins=False):
         lidar_file = self.data_path / sequence_name / ('%04d.npy' % sample_idx)
-        point_features = np.load(lidar_file)  # (N, 7): [x, y, z, intensity, elongation, NLZ_flag]
+        point_features = np.load(lidar_file)  # (N, 7): [x, y, z, intensity, elongation, NLZ_flag, rowcol]
 
-        points_all, NLZ_flag = point_features[:, 0:5], point_features[:, 5]
+        points_all, NLZ_flag, rowcol_encoded = point_features[:, 0:5], point_features[:, 5], point_features[:, 6]
+        rowcol = common_utils.rowcol_decoder(rowcol_encoded)
+        points_all = np.concatenate([points_all, rowcol.astype(np.float32)], axis=-1)
         if not self.dataset_cfg.get('DISABLE_NLZ_FLAG_ON_POINTS', False):
             points_all = points_all[NLZ_flag == -1]
 
